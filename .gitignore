@@ -1,0 +1,12 @@
+#bmad-core
+.bmad-core
+
+#cursor
+.cursor
+web-bundles
+
+#system
+.DS_Store
+
+#python
+venv
