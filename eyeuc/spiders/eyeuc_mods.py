@@ -43,6 +43,14 @@ class EyeucModsSpider(scrapy.Spider):
         
         # 用于页内去重
         self.seen_urls_per_page = set()
+        
+        # Stage 2: 统计计数器
+        self.stats_counter = {
+            'items_scraped': 0,
+            'parse_errors': 0,
+            'selector_fallbacks': 0,
+            'lists_processed': set(),
+        }
     
     def _load_cookies(self):
         """从 JSON 文件加载 cookies"""
@@ -59,6 +67,57 @@ class EyeucModsSpider(scrapy.Spider):
             self.logger.info(f"已加载 {len(self.cookies_dict)} 个 cookies")
         except Exception as e:
             self.logger.error(f"加载 cookies 失败: {e}")
+    
+    def _extract_with_fallback(self, response, primary_selector, fallback_selectors=None, 
+                                extract_method='get', default='', field_name='unknown'):
+        """
+        Stage 2: 带兜底的选择器提取
+        
+        Args:
+            response: Scrapy response
+            primary_selector: 主选择器（CSS 或 XPath）
+            fallback_selectors: 兜底选择器列表
+            extract_method: 'get' 或 'getall'
+            default: 默认值
+            field_name: 字段名（用于日志）
+        
+        Returns:
+            提取的值或默认值
+        """
+        fallback_selectors = fallback_selectors or []
+        
+        # 尝试主选择器
+        try:
+            if primary_selector.startswith('//'):
+                result = response.xpath(primary_selector)
+            else:
+                result = response.css(primary_selector)
+            
+            value = getattr(result, extract_method)()
+            if value:
+                return value
+        except Exception as e:
+            self.logger.warning(f"主选择器失败 ({field_name}): {e}")
+        
+        # 尝试兜底选择器
+        for i, fallback in enumerate(fallback_selectors, 1):
+            try:
+                if fallback.startswith('//'):
+                    result = response.xpath(fallback)
+                else:
+                    result = response.css(fallback)
+                
+                value = getattr(result, extract_method)()
+                if value:
+                    self.logger.info(f"选择器兜底成功 ({field_name}): 使用第 {i} 个兜底选择器")
+                    self.stats_counter['selector_fallbacks'] += 1
+                    return value
+            except Exception as e:
+                self.logger.warning(f"兜底选择器 {i} 失败 ({field_name}): {e}")
+        
+        # 所有选择器都失败，返回默认值
+        self.logger.warning(f"所有选择器失败 ({field_name})，使用默认值: {default}")
+        return default
     
     def expand_list_ids(self, list_ids, list_range):
         """
@@ -114,6 +173,9 @@ class EyeucModsSpider(scrapy.Spider):
         """解析列表页，提取详情链接和翻页"""
         list_id = response.meta['list_id']
         page = response.meta.get('page', 1)
+        
+        # Stage 2: 记录处理的列表
+        self.stats_counter['lists_processed'].add(list_id)
         
         self.logger.info(f"正在解析列表 {list_id} 第 {page} 页: {response.url}")
         
@@ -906,6 +968,9 @@ class EyeucModsSpider(scrapy.Spider):
             # 所有分支处理完毕，返回完整 item
             self.logger.info(f"所有分支处理完毕（mid={mid}），共 {len(versions_data)} 个分支")
             
+            # Stage 2: 更新统计计数器
+            self.stats_counter['items_scraped'] += 1
+            
             yield {
                 'mid': mid,
                 'list_id': list_id,
@@ -922,4 +987,28 @@ class EyeucModsSpider(scrapy.Spider):
         else:
             # 还有分支未处理，更新 meta 中的 versions_data
             meta['versions_data'] = versions_data
+    
+    def closed(self, reason):
+        """
+        Stage 2: Spider 关闭时输出统计信息
+        """
+        self.logger.info("=" * 80)
+        self.logger.info("Spider 关闭统计 (Stage 2)")
+        self.logger.info("=" * 80)
+        self.logger.info(f"  关闭原因: {reason}")
+        self.logger.info(f"  抓取 Items: {self.stats_counter['items_scraped']}")
+        self.logger.info(f"  解析错误: {self.stats_counter['parse_errors']}")
+        self.logger.info(f"  选择器兜底: {self.stats_counter['selector_fallbacks']}")
+        self.logger.info(f"  处理列表数: {len(self.stats_counter['lists_processed'])}")
+        
+        if self.stats_counter['lists_processed']:
+            self.logger.info(f"  列表 IDs: {sorted(self.stats_counter['lists_processed'])}")
+        
+        # 计算成功率
+        total = self.stats_counter['items_scraped'] + self.stats_counter['parse_errors']
+        if total > 0:
+            success_rate = (self.stats_counter['items_scraped'] / total) * 100
+            self.logger.info(f"  成功率: {success_rate:.2f}%")
+        
+        self.logger.info("=" * 80)
     

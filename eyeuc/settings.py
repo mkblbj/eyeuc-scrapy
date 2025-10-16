@@ -20,14 +20,14 @@ USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTM
 ROBOTSTXT_OBEY = False
 
 # Configure maximum concurrent requests performed by Scrapy (default: 16)
-CONCURRENT_REQUESTS = 8
+CONCURRENT_REQUESTS = 12  # Stage 2: 提升到 12（在 8-16 之间）
 
 # Configure a delay for requests for the same website (default: 0)
 # See https://docs.scrapy.org/en/latest/topics/settings.html#download-delay
 # See also autothrottle settings and docs
-DOWNLOAD_DELAY = 0.5
+DOWNLOAD_DELAY = 0.3  # Stage 2: 降低到 0.3s（配合 AutoThrottle 动态调整）
 # The download delay setting will honor only one of:
-CONCURRENT_REQUESTS_PER_DOMAIN = 4
+CONCURRENT_REQUESTS_PER_DOMAIN = 6  # Stage 2: 提升到 6（在 4-8 之间）
 # CONCURRENT_REQUESTS_PER_IP = 16
 
 # Disable cookies (enabled by default)
@@ -48,15 +48,21 @@ DEFAULT_REQUEST_HEADERS = {
 
 # Enable or disable spider middlewares
 # See https://docs.scrapy.org/en/latest/topics/spider-middleware.html
-# SPIDER_MIDDLEWARES = {
-#    "eyeuc.middlewares.EyeucSpiderMiddleware": 543,
-# }
+SPIDER_MIDDLEWARES = {
+    # 解析错误监控（保存失败样本）
+    "eyeuc.middlewares.ParseErrorMonitorMiddleware": 543,
+}
 
 # Enable or disable downloader middlewares
 # See https://docs.scrapy.org/en/latest/topics/downloader-middleware.html
-# DOWNLOADER_MIDDLEWARES = {
-#    "eyeuc.middlewares.EyeucDownloaderMiddleware": 543,
-# }
+DOWNLOADER_MIDDLEWARES = {
+    # 随机延迟（避免节律化）
+    "eyeuc.middlewares.RandomDelayMiddleware": 100,
+    # 增强重试（错误分类）
+    "eyeuc.middlewares.EnhancedRetryMiddleware": 550,
+    # 统计收集
+    "eyeuc.middlewares.StatsCollectorMiddleware": 585,
+}
 
 # Enable or disable extensions
 # See https://docs.scrapy.org/en/latest/topics/extensions.html
@@ -73,15 +79,15 @@ ITEM_PIPELINES = {
 # Enable and configure the AutoThrottle extension (disabled by default)
 # See https://docs.scrapy.org/en/latest/topics/autothrottle.html
 AUTOTHROTTLE_ENABLED = True
-# The initial download delay
-AUTOTHROTTLE_START_DELAY = 0.5
-# The maximum download delay to be set in case of high latencies
-AUTOTHROTTLE_MAX_DELAY = 8
+# The initial download delay (Stage 2: 0.2-0.5s)
+AUTOTHROTTLE_START_DELAY = 0.3
+# The maximum download delay to be set in case of high latencies (Stage 2: 3-8s)
+AUTOTHROTTLE_MAX_DELAY = 6
 # The average number of requests Scrapy should be sending in parallel to
 # each remote server
-AUTOTHROTTLE_TARGET_CONCURRENCY = 2.0
+AUTOTHROTTLE_TARGET_CONCURRENCY = 2.5  # Stage 2: 提升到 2.5
 # Enable showing throttle stats for every response received:
-AUTOTHROTTLE_DEBUG = False
+AUTOTHROTTLE_DEBUG = False  # 生产环境设为 False，开发时可设为 True
 
 # Enable and configure HTTP caching (disabled by default)
 # See https://docs.scrapy.org/en/latest/topics/downloader-middleware.html#httpcache-middleware-settings
@@ -110,6 +116,14 @@ LOG_LEVEL = "INFO"
 # Per-list output settings (for阶段1.5)
 PER_LIST_OUTPUT_DIR = "per_list_output"
 PER_LIST_AS_JSONL = True  # True = JSONL, False = JSON array
+
+# Stage 2: 随机延迟中间件配置
+RANDOM_DELAY_MIN = 0.1  # 最小延迟（秒）
+RANDOM_DELAY_MAX = 0.4  # 最大延迟（秒）
+
+# Stage 2: 解析错误监控配置
+PARSE_ERROR_OUTPUT_DIR = "parse_errors"  # 失败样本保存目录
+PARSE_ERROR_SAVE_SAMPLES = True  # 是否保存失败样本
 
 # Images pipeline settings (for阶段3，暂时注释)
 # IMAGES_STORE = "images"
