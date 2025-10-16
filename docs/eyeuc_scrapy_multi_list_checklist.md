@@ -71,17 +71,17 @@
 - [x] FEEDS `-O` 合并导出保留（可选） ✅
 
 ### 1.6 运行与验收
-- [ ] 单 list 验证：`scrapy crawl eyeuc_mods -a cookies=cookies.json -a list_ids=182 -O all_182.json`
-- [ ] 多 list 验证：`scrapy crawl eyeuc_mods -a list_ids=181,182,183 -O all_181_182_183.json`
-- [ ] 区间验证：`scrapy crawl eyeuc_mods -a list_range=180-185`
-- [ ] 断点续跑：`-s JOBDIR=.job/eyeuc_multi`
+- [x] 单 list 验证：`scrapy crawl eyeuc_mods -a cookies=cookies.json -a list_ids=172` ✅
+- [x] 多 list 验证：`scrapy crawl eyeuc_mods -a list_ids=172,93 -O test_all_172_93.json` ✅
+- [ ] 区间验证：`scrapy crawl eyeuc_mods -a list_range=180-185` (跳过，编号不连续)
+- [ ] 断点续跑：`-s JOBDIR=.job/eyeuc_multi` (Stage 2)
 
 验收标准（MVP）：
-- [ ] cookies 有效：列表页无“登录/权限不足”提示
-- [ ] 翻页完整：末页不丢；`max_page` 与 UI 一致
-- [ ] 详情去重：按 `detail_url` 计数无重复
-- [ ] 每个 `list_id` 产出 1 份 JSONL，字段齐全
-- [ ] 合并文件存在，记录数 ≈ 各 JSONL 总和
+- [x] cookies 有效：列表页无"登录/权限不足"提示 ✅
+- [x] 翻页完整：末页不丢；`max_page` 与 UI 一致 ✅
+- [x] 详情去重：按 `detail_url` 计数无重复 ✅
+- [x] 每个 `list_id` 产出 1 份 JSONL，字段齐全 ✅
+- [x] 合并文件存在，记录数 ≈ 各 JSONL 总和 ✅
 
 ---
 
@@ -161,9 +161,9 @@ scrapy crawl eyeuc_mods -a cookies=cookies.json -a list_ids=181,182 -s JOBDIR=.j
 ## 里程碑检查
 
 ### MVP 完成
-- [ ] 多入口抓取与翻页完整
-- [ ] 字段齐全与去重通过
-- [ ] 按 list JSONL 产出 + 合并文件可用
+- [x] 多入口抓取与翻页完整 ✅
+- [x] 字段齐全与去重通过 ✅
+- [x] 按 list JSONL 产出 + 合并文件可用 ✅
 
 ### 稳健性完成
 - [ ] 限速/并发策略固化
