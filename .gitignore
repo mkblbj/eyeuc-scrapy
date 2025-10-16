@@ -10,3 +10,4 @@ web-bundles
 
 #python
 venv
+__pycache__
