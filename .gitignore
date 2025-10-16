@@ -11,3 +11,6 @@ web-bundles
 #python
 venv
 __pycache__
+
+#db
+per_list_output

@@ -63,12 +63,12 @@
   - [x] 批量处理：从 JSON 读取多个 mid 并获取直链 ✅
 
 ### 1.5 导出：按 list 分文件 + 合并文件
-- [ ] 实现 `PerListJsonPipeline`（JSONL 默认；可切换 JSON 数组）
-- [ ] 文件命名：`eyeuc_list{list_id}_{game?}_{YYYYmmdd_HHMMSS}.jsonl`
-- [ ] `settings.py`：
-  - [ ] `ITEM_PIPELINES = {"eyeuc.pipelines.PerListJsonPipeline": 300}`
-  - [ ] `PER_LIST_OUTPUT_DIR = "per_list_output"`，`PER_LIST_AS_JSONL = True`
-- [ ] FEEDS `-O` 合并导出保留（可选）
+- [x] 实现 `PerListJsonPipeline`（JSONL 默认；可切换 JSON 数组） ✅
+- [x] 文件命名：`eyeuc_list{list_id}_{game?}_{YYYYmmdd_HHMMSS}.jsonl` ✅
+- [x] `settings.py`： ✅
+  - [x] `ITEM_PIPELINES = {"eyeuc.pipelines.PerListJsonPipeline": 300}` ✅
+  - [x] `PER_LIST_OUTPUT_DIR = "per_list_output"`，`PER_LIST_AS_JSONL = True` ✅
+- [x] FEEDS `-O` 合并导出保留（可选） ✅
 
 ### 1.6 运行与验收
 - [ ] 单 list 验证：`scrapy crawl eyeuc_mods -a cookies=cookies.json -a list_ids=182 -O all_182.json`
