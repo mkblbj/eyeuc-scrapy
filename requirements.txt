@@ -1,3 +1,5 @@
 scrapy>=2.11
 scrapy-playwright  # 可选，仅在需要 JS 渲染时启用
 brotli  # 支持 br 压缩
+pymysql>=1.1.0  # MySQL 连接（数据导入）
+python-dotenv>=1.0.0  # 自动加载 .env 文件

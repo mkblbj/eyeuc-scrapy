@@ -273,6 +273,37 @@ class EyeucModsSpider(scrapy.Spider):
         page = request.meta.get('page')
         self.logger.info(f"列表 {list_id} 第 {page} 页不存在（404），已到达末页")
     
+    def _extract_category(self, response):
+        """
+        从 meta keywords 提取分类：NBA2K25资源下载,NBA2K25照片,巅峰马刺卡
+        提取包含分类的关键词（照片/工具/名单等）
+        """
+        # 方法 1: 从 meta keywords 提取
+        keywords = response.css('meta[name="keywords"]::attr(content)').get()
+        if keywords:
+            # 尝试匹配：NBA2K25照片、NBA2K25工具、NBA2K25名单 等
+            pattern = r'NBA\s*2K\s*\d{2,4}\s*([^,，\s]+)'
+            match = re.search(pattern, keywords, re.IGNORECASE)
+            if match:
+                category = match.group(1)
+                # 过滤掉"资源下载"等非分类词
+                if category not in ['资源下载', '资源', '下载', 'mods']:
+                    self.logger.debug(f"提取到分类: {category} (来源: keywords)")
+                    return category
+        
+        # 方法 2: 从 title 提取（格式：xxxx_NBA2K25照片 - EYE资源中心）
+        title = response.css('title::text').get()
+        if title:
+            pattern = r'_NBA\s*2K\s*\d{2,4}\s*([^_\-\s]+)'
+            match = re.search(pattern, title, re.IGNORECASE)
+            if match:
+                category = match.group(1)
+                self.logger.debug(f"提取到分类: {category} (来源: title)")
+                return category
+        
+        self.logger.warning(f"未提取到分类，URL: {response.url}")
+        return None
+    
     def _guess_game_name(self, response, list_id):
         """
         从 H1/title/面包屑聚合文本，用正则归一化游戏名
@@ -322,13 +353,16 @@ class EyeucModsSpider(scrapy.Spider):
         # 1. 标题：从 H1 提取
         title = self._extract_title(response)
         
-        # 2. 正文图片：去掉缩略图后缀获取大图
+        # 2. 分类：从面包屑提取（资源中心 > NBA2K25 > 照片）
+        category = self._extract_category(response)
+        
+        # 3. 正文图片：去掉缩略图后缀获取大图
         images = self._extract_images(response)
         
-        # 3. 简介：从资源简介区提取（Markdown 格式返回 HTML，纯文本格式返回文本）
+        # 4. 简介：从资源简介区提取（Markdown 格式返回 HTML，纯文本格式返回文本）
         intro = self._extract_intro(response)
         
-        # 4. 提取元数据（作者、发布者、时间、统计等）
+        # 5. 提取元数据（作者、发布者、时间、统计等）
         metadata = self._extract_metadata(response)
         
         # 5. 提取 mid/vid 和 formhash（用于直链提取）
@@ -348,6 +382,7 @@ class EyeucModsSpider(scrapy.Spider):
                     'cookiejar': list_id,
                     'list_id': list_id,
                     'game': game_name,
+                    'category': category,  # 分类
                     'title': title,
                     'cover_image': cover_image,
                     'images': images,
@@ -370,6 +405,7 @@ class EyeucModsSpider(scrapy.Spider):
             yield {
                 'list_id': list_id,
                 'game': game_name,
+                'category': category,  # 分类
                 'title': title,
                 'cover_image': cover_image,
                 'images': images,
@@ -864,6 +900,7 @@ class EyeucModsSpider(scrapy.Spider):
                     'mid': mid,
                     'list_id': list_id,
                     'game': game,
+                    'category': response.meta.get('category'),  # 分类
                     'title': title,
                     'cover_image': cover_image,
                     'images': images,
@@ -971,6 +1008,7 @@ class EyeucModsSpider(scrapy.Spider):
             'mid': mid,
             'list_id': list_id,
             'game': game,
+            'category': response.meta.get('category'),  # 分类
             'title': title,
             'cover_image': cover_image,
             'images': images,

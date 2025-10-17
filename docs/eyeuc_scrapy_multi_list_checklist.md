@@ -109,6 +109,62 @@
 - [x] 选择器兜底机制就绪 ✅
 - [x] 关键日志指标可用，便于回归 ✅
 
+### 2.5 数据入库（MySQL）
+
+#### 2.5.1 表结构与索引（schema.sql）
+- [x] 建表：`lists`（集合/游戏）、`mods`（资源）、`images`（图集）、`versions`（分支）、`downloads`（附件）✅
+- [x] 主键与唯一约束：
+  - [x] `mods.mid` 作为 PK ✅
+  - [x] `versions` 唯一键 `(mod_id, vid)` ✅
+  - [x] `downloads` 唯一键 `(mod_id, version_id, fileid, url)` ✅
+  - [x] `images` 唯一键 `(mod_id, url)` ✅
+- [x] 索引：`mods.idx_list_id`、`mods.idx_author`、`mods.fidx_title(FTS)` ✅
+- [x] 字符集：`utf8mb4` + `utf8mb4_unicode_ci` ✅
+- [x] 支持 5 种下载类型：`internal/external/forum_redirect/empty/unknown` ✅
+
+#### 2.5.2 导入脚本（scripts/import_eyeuc_jsonl_to_mysql.py）
+- [x] 读取 JSONL 或 JSON 数组，支持目录 `glob` 批量导入 ✅
+- [x] 环境变量读取连接：`MYSQL_HOST/PORT/USER/PASSWORD/DATABASE/SSL` ✅
+- [x] 幂等导入：各表使用 `INSERT ... ON DUPLICATE KEY UPDATE` ✅
+- [x] 批量提交：每 200 条 `commit`；异常自动回滚 ✅
+- [x] 数据映射：
+  - [x] `mods`：基础字段 + `raw_json` 备份 ✅
+  - [x] `images`：顺序索引 `idx` ✅
+  - [x] `versions`：`vid/version_name/is_default/stats.updated_at/views/downloads` ✅
+  - [x] `downloads`：`type(5种)/fileid/filename/size/url/note/version_label` ✅
+- [x] 验证脚本（`scripts/verify_database.py`）：统计、排行、完整性检查 ✅
+
+#### 2.5.3 直链对接策略
+- [ ] 在线生成（推荐）：前端点击附件 → 后端（FastAPI）读取 `downloads` 元数据（`type='internal'`）→ 调用直链生成器（见 `fetch_direct_links.py` 内部逻辑）→ 代理文件流；
+- [ ] 外链直跳：`type='external'` 直接重定向到 `url`；
+- [ ] 风险提示：直链带时效/鉴权，需以用户 Cookie 请求，注意限速与错误兜底；
+
+#### 2.5.4 导入与校验（List 193 已测试通过）✅
+- [x] 本地 `.env`/环境变量配置到目标库：
+  - [x] `MYSQL_HOST=<your_host>` ✅
+  - [x] `MYSQL_PORT=3306` ✅
+  - [x] `MYSQL_USER=<your_user>` ✅
+  - [x] `MYSQL_PASSWORD=<your_password>` ✅
+  - [x] `MYSQL_DATABASE=<your_database>` ✅
+  - [x] `MYSQL_SSL=false` ✅
+- [x] 导入合并文件：`python scripts/import_eyeuc_jsonl_to_mysql.py "per_list_output/eyeuc_list*_merged_*.jsonl"` ✅
+- [x] 样本核对（List 193）：
+  - [x] `SELECT COUNT(*) FROM mods WHERE list_id=193;` = 98 ≈ JSONL 98 行 ✅
+  - [x] `SELECT COUNT(*) FROM versions;` = 149（平均 1.5 分支/mod）✅
+  - [x] `SELECT COUNT(*) FROM downloads;` = 188（平均 1.9 附件/mod）✅
+  - [x] 数据完整性：无版本 mods=0, 无下载版本=0 ✅
+
+#### 2.5.5 FastAPI/React 对接（你方实现）
+- [ ] 列表 API：`GET /mods?list_id=&page=&size=`（`mods` + 一张封面图）
+- [ ] 详情 API：`GET /mods/{mid}`（`mods` + `images` + `versions` + `downloads`）
+- [ ] 下载 API：`GET /downloads/{mid}/{vid}/{fileid}`（内部构造直链并代理文件流；外链重定向）
+- [ ] 前端卡片/详情渲染（`intro_html` 原样渲染 + 图集 + 版本/附件列表）
+
+验收标准（阶段 2.5）：
+- [ ] 任一 list（如 193、182）导入后，`mods`/`versions`/`downloads` 计数与 JSON 基本一致；
+- [ ] 下载 API 成功拉起 3 个以上 `internal` 附件；
+- [ ] 页面列表/详情可用，检索/排序响应 < 300ms（10k 规模下）
+
 ---
 
 2. 生产部署
