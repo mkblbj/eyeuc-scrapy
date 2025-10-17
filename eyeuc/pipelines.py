@@ -46,6 +46,10 @@ class PerListJsonPipeline:
         self.output_path.mkdir(parents=True, exist_ok=True)
         spider.logger.info(f"PerListJsonPipeline 已启动，输出目录: {self.output_path.absolute()}")
         spider.logger.info(f"输出格式: {'JSONL' if self.as_jsonl else 'JSON 数组'}")
+        
+        # 获取页数范围（用于文件名）
+        self.start_page = getattr(spider, 'start_page', 1)
+        self.end_page = getattr(spider, 'end_page', None)
     
     def close_spider(self, spider):
         """Spider 关闭时关闭所有文件并输出统计"""
@@ -98,11 +102,18 @@ class PerListJsonPipeline:
         # 清理 game 名称，用于文件名
         game_slug = self._slugify(game) if game and game != 'unknown' else ''
         
-        # 构造文件名
+        # 构造文件名（包含页数范围）
         if game_slug:
-            filename = f"eyeuc_list{list_id}_{game_slug}_{self.timestamp}"
+            filename = f"eyeuc_list{list_id}_{game_slug}"
         else:
-            filename = f"eyeuc_list{list_id}_{self.timestamp}"
+            filename = f"eyeuc_list{list_id}"
+        
+        # 添加页数范围（如果指定了 end_page）
+        if self.end_page:
+            filename += f"_p{self.start_page}-{self.end_page}"
+        
+        # 添加时间戳
+        filename += f"_{self.timestamp}"
         
         # 添加扩展名
         if self.as_jsonl:

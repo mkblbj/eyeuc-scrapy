@@ -19,7 +19,7 @@ class EyeucModsSpider(scrapy.Spider):
     }
     
     def __init__(self, cookies=None, list_ids=None, list_range=None, use_pw=None, 
-                 direct_dl=None, prefer_versions=None, *args, **kwargs):
+                 direct_dl=None, prefer_versions=None, start_page='1', end_page='0', *args, **kwargs):
         super().__init__(*args, **kwargs)
         
         # 参数解析
@@ -32,6 +32,10 @@ class EyeucModsSpider(scrapy.Spider):
         self.direct_dl = direct_dl and direct_dl.lower() in ('true', '1', 'yes')  # 默认 false（只抓元数据）
         self.prefer_versions = prefer_versions and prefer_versions.lower() in ('true', '1', 'yes')
         
+        # 页数范围（用于分批抓取）
+        self.start_page = int(start_page)
+        self.end_page = int(end_page) if int(end_page) > 0 else None  # 0 表示无限制
+        
         # 加载 cookies
         if self.cookies_file:
             self._load_cookies()
@@ -39,6 +43,7 @@ class EyeucModsSpider(scrapy.Spider):
         # 解析 list_ids
         self.target_list_ids = self.expand_list_ids(self.list_ids_param, self.list_range_param)
         self.logger.info(f"目标列表 IDs: {self.target_list_ids}")
+        self.logger.info(f"页数范围: {self.start_page} - {self.end_page if self.end_page else '无限制'}")
         self.logger.info(f"直链提取: {'启用' if self.direct_dl else '禁用'}")
         
         # 用于页内去重
@@ -51,6 +56,9 @@ class EyeucModsSpider(scrapy.Spider):
             'selector_fallbacks': 0,
             'lists_processed': set(),
         }
+        
+        # 收集未完成的 items（key: mid, value: item_data）
+        self.pending_items = {}
     
     def _load_cookies(self):
         """从 JSON 文件加载 cookies"""
@@ -154,7 +162,8 @@ class EyeucModsSpider(scrapy.Spider):
     def start_requests(self):
         """为每个 list_id 发起起始请求"""
         for list_id in self.target_list_ids:
-            url = f"https://bbs.eyeuc.com/down/list/{list_id}"
+            # 从 start_page 开始
+            url = f"https://bbs.eyeuc.com/down/list/{list_id}/{self.start_page}"
             
             # 每个 list_id 使用独立的 cookiejar
             yield scrapy.Request(
@@ -164,7 +173,7 @@ class EyeucModsSpider(scrapy.Spider):
                 meta={
                     'cookiejar': list_id,  # 会话隔离
                     'list_id': list_id,
-                    'page': 1,
+                    'page': self.start_page,
                 },
                 dont_filter=True,
             )
@@ -179,20 +188,15 @@ class EyeucModsSpider(scrapy.Spider):
         
         self.logger.info(f"正在解析列表 {list_id} 第 {page} 页: {response.url}")
         
-        # 第一页：解析游戏名和最大页码
-        if page == 1:
+        # 解析游戏名（如果还没有的话）
+        if 'game_name' not in response.meta:
+            # 首次访问该列表（可能不是第 1 页），尝试提取游戏名
             game_name = self._guess_game_name(response, list_id)
             response.meta['game_name'] = game_name
             self.logger.info(f"列表 {list_id} 游戏名: {game_name}")
-            
-            # 解析最大页码
-            max_page = self._parse_max_page(response, list_id)
-            response.meta['max_page'] = max_page
-            self.logger.info(f"列表 {list_id} 最大页码: {max_page}")
         else:
-            # 后续页面继承 game_name 和 max_page
+            # 后续页面继承 game_name
             game_name = response.meta.get('game_name', f'list_{list_id}')
-            max_page = response.meta.get('max_page', 1)
         
         # 提取详情链接和封面图（页内去重）
         # 封面图在列表页，结构：.modlist ul li
@@ -229,14 +233,22 @@ class EyeucModsSpider(scrapy.Spider):
                     'list_url': response.url,
                     'cover_image': cover_image,  # 传递封面图
                 },
+                dont_filter=True,  # 禁用 Scrapy 全局去重（seen_in_page 已做页内去重）
             )
         
         self.logger.info(f"列表 {list_id} 第 {page} 页找到 {len(seen_in_page)} 个详情链接")
         
-        # 翻页：仅在第一页时生成后续页面请求
-        if page == 1 and max_page > 1:
-            for next_page in range(2, max_page + 1):
+        # 翻页策略：检查是否有下一页（持续翻页直到没有数据或达到 end_page）
+        # 如果当前页有数据，且未达到 end_page，尝试访问下一页
+        if len(seen_in_page) > 0:
+            next_page = page + 1
+            
+            # 检查是否达到 end_page 限制
+            if self.end_page and next_page > self.end_page:
+                self.logger.info(f"列表 {list_id} 已到达 end_page={self.end_page}，停止翻页")
+            else:
                 next_url = f"https://bbs.eyeuc.com/down/list/{list_id}/{next_page}"
+                
                 yield scrapy.Request(
                     url=next_url,
                     callback=self.parse_list,
@@ -246,10 +258,20 @@ class EyeucModsSpider(scrapy.Spider):
                         'list_id': list_id,
                         'page': next_page,
                         'game_name': game_name,
-                        'max_page': max_page,
                     },
                     dont_filter=True,
+                    errback=self.handle_page_error,
                 )
+        else:
+            # 当前页没有数据，说明已到末页
+            self.logger.info(f"列表 {list_id} 第 {page} 页无数据，已到达末页")
+    
+    def handle_page_error(self, failure):
+        """处理分页请求错误（如 404）"""
+        request = failure.request
+        list_id = request.meta.get('list_id')
+        page = request.meta.get('page')
+        self.logger.info(f"列表 {list_id} 第 {page} 页不存在（404），已到达末页")
     
     def _guess_game_name(self, response, list_id):
         """
@@ -289,25 +311,6 @@ class EyeucModsSpider(scrapy.Spider):
         
         # 最终兜底
         return f'list_{list_id}'
-    
-    def _parse_max_page(self, response, list_id):
-        r"""
-        仅在第一页扫描 /down/list/{lid}/(\d+) 取最大页码
-        """
-        max_page = 1
-        
-        # 提取所有链接
-        all_links = response.css('a::attr(href)').getall()
-        
-        # 正则匹配分页链接
-        pattern = rf'/down/list/{list_id}/(\d+)'
-        for link in all_links:
-            match = re.search(pattern, link)
-            if match:
-                page_num = int(match.group(1))
-                max_page = max(max_page, page_num)
-        
-        return max_page
     
     def parse_detail(self, response):
         """解析详情页 - 阶段 1.4 完整实现 + 1.4.x 直链提取"""
@@ -963,6 +966,26 @@ class EyeucModsSpider(scrapy.Spider):
         
         self.logger.info(f"已处理分支 {version_index + 1}/{total_versions}: {version_name} (mid={mid}, vid={vid})")
         
+        # 构建 item 数据
+        item_data = {
+            'mid': mid,
+            'list_id': list_id,
+            'game': game,
+            'title': title,
+            'cover_image': cover_image,
+            'images': images,
+            'intro': intro,  # 资源主描述（Markdown HTML 或纯文本）
+            'metadata': metadata,  # 元数据（作者、时间、统计等）
+            'versions': versions_data,  # 所有分支数据
+            'detail_url': detail_url,
+            'list_url': list_url,
+            'total_versions': total_versions,  # 记录总分支数
+            'collected_versions': len(versions_data),  # 已收集的分支数
+        }
+        
+        # 存储到 pending_items
+        self.pending_items[mid] = item_data
+        
         # 检查是否所有分支都处理完毕
         if len(versions_data) >= total_versions:
             # 所有分支处理完毕，返回完整 item
@@ -971,27 +994,42 @@ class EyeucModsSpider(scrapy.Spider):
             # Stage 2: 更新统计计数器
             self.stats_counter['items_scraped'] += 1
             
-            yield {
-                'mid': mid,
-                'list_id': list_id,
-                'game': game,
-                'title': title,
-                'cover_image': cover_image,
-                'images': images,
-                'intro': intro,  # 资源主描述（Markdown HTML 或纯文本）
-                'metadata': metadata,  # 元数据（作者、时间、统计等）
-                'versions': versions_data,  # 所有分支数据
-                'detail_url': detail_url,
-                'list_url': list_url,
-            }
+            # 从 pending 中移除
+            self.pending_items.pop(mid, None)
+            
+            yield item_data
         else:
             # 还有分支未处理，更新 meta 中的 versions_data
             meta['versions_data'] = versions_data
     
     def closed(self, reason):
         """
-        Stage 2: Spider 关闭时输出统计信息
+        Stage 2: Spider 关闭时输出统计信息 + 清理未完成的 items
         """
+        # 处理未完成的 items
+        if self.pending_items:
+            self.logger.warning("=" * 80)
+            self.logger.warning(f"发现 {len(self.pending_items)} 个未完成的 items，强制输出...")
+            self.logger.warning("=" * 80)
+            
+            for mid, item_data in list(self.pending_items.items()):
+                collected = item_data.get('collected_versions', 0)
+                total = item_data.get('total_versions', 0)
+                title = item_data.get('title', '')[:50]
+                
+                self.logger.warning(
+                    f"未完成 item: mid={mid}, 分支 {collected}/{total}, "
+                    f"标题: {title}"
+                )
+                
+                # 移除内部字段
+                item_data.pop('total_versions', None)
+                item_data.pop('collected_versions', None)
+                
+                # 强制输出
+                yield item_data
+                self.stats_counter['items_scraped'] += 1
+        
         self.logger.info("=" * 80)
         self.logger.info("Spider 关闭统计 (Stage 2)")
         self.logger.info("=" * 80)
