@@ -2,6 +2,7 @@ import scrapy
 import json
 import re
 from urllib.parse import urljoin, urlparse
+from datetime import datetime, timedelta
 
 
 class EyeucModsSpider(scrapy.Spider):
@@ -513,6 +514,83 @@ class EyeucModsSpider(scrapy.Spider):
         
         return ''
     
+    def _parse_relative_time(self, time_str):
+        """
+        将相对时间转换为绝对时间字符串
+        支持格式：
+        - "昨天 17:37" -> "2025-10-18 17:37"
+        - "前天 12:34" -> "2025-10-17 12:34"
+        - "3 天前" -> "2025-10-16 00:00"
+        - "2 小时前" -> "2025-10-19 15:30"
+        - "30 分钟前" -> "2025-10-19 17:00"
+        """
+        if not time_str:
+            return None
+            
+        time_str = time_str.strip()
+        now = datetime.now()
+        
+        # 如果已经是绝对时间格式，直接返回
+        if re.match(r'\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}', time_str):
+            return time_str
+        
+        try:
+            # 匹配 "昨天 HH:MM"
+            match = re.match(r'昨天\s+(\d{1,2}):(\d{2})', time_str)
+            if match:
+                hour, minute = int(match.group(1)), int(match.group(2))
+                target_date = now - timedelta(days=1)
+                result = target_date.replace(hour=hour, minute=minute, second=0, microsecond=0)
+                return result.strftime('%Y-%m-%d %H:%M')
+            
+            # 匹配 "前天 HH:MM"
+            match = re.match(r'前天\s+(\d{1,2}):(\d{2})', time_str)
+            if match:
+                hour, minute = int(match.group(1)), int(match.group(2))
+                target_date = now - timedelta(days=2)
+                result = target_date.replace(hour=hour, minute=minute, second=0, microsecond=0)
+                return result.strftime('%Y-%m-%d %H:%M')
+            
+            # 匹配 "今天 HH:MM"
+            match = re.match(r'今天\s+(\d{1,2}):(\d{2})', time_str)
+            if match:
+                hour, minute = int(match.group(1)), int(match.group(2))
+                result = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+                return result.strftime('%Y-%m-%d %H:%M')
+            
+            # 匹配 "N 天前"
+            match = re.match(r'(\d+)\s*天前', time_str)
+            if match:
+                days = int(match.group(1))
+                target_date = now - timedelta(days=days)
+                return target_date.strftime('%Y-%m-%d %H:%M')
+            
+            # 匹配 "N 小时前"
+            match = re.match(r'(\d+)\s*小时前', time_str)
+            if match:
+                hours = int(match.group(1))
+                target_date = now - timedelta(hours=hours)
+                return target_date.strftime('%Y-%m-%d %H:%M')
+            
+            # 匹配 "N 分钟前"
+            match = re.match(r'(\d+)\s*分钟前', time_str)
+            if match:
+                minutes = int(match.group(1))
+                target_date = now - timedelta(minutes=minutes)
+                return target_date.strftime('%Y-%m-%d %H:%M')
+            
+            # 匹配 "刚刚"
+            if '刚刚' in time_str or '刚才' in time_str:
+                return now.strftime('%Y-%m-%d %H:%M')
+            
+            # 如果无法识别，返回 None（让后续处理决定）
+            self.logger.warning(f"无法解析相对时间: {time_str}")
+            return None
+            
+        except Exception as e:
+            self.logger.error(f"解析相对时间出错 '{time_str}': {e}")
+            return None
+    
     def _extract_metadata(self, response):
         """提取资源元数据（作者、发布者、时间、统计等）"""
         metadata = {}
@@ -540,24 +618,45 @@ class EyeucModsSpider(scrapy.Spider):
                 label = label.strip()
                 
                 if '当前版本最后更新' in label:
-                    # 可能有相对时间（如"6 天前"）或绝对时间
-                    time_span = item.css('span::attr(title)').get()  # 绝对时间
-                    time_relative = item.css('span::text').get()      # 相对时间
-                    metadata['current_version_updated'] = time_span if time_span else time_relative
+                    # 优先获取绝对时间（title 属性），否则解析相对时间
+                    time_span = item.css('span::attr(title)').get()
+                    time_text = item.css('span::text').get()
+                    # 如果没有 span，直接从 p 标签获取文本
+                    if not time_text:
+                        time_text = item.css('p:not(.custom-tt)::text').get()
+                    
+                    if time_span:
+                        metadata['current_version_updated'] = time_span
+                    elif time_text:
+                        parsed_time = self._parse_relative_time(time_text.strip())
+                        metadata['current_version_updated'] = parsed_time if parsed_time else time_text.strip()
                     
                 elif '最后更新时间' in label:
                     time_span = item.css('span::attr(title)').get()
-                    time_relative = item.css('span::text').get()
-                    metadata['last_updated'] = time_span if time_span else time_relative
+                    time_text = item.css('span::text').get()
+                    # 如果没有 span，直接从 p 标签获取文本
+                    if not time_text:
+                        time_text = item.css('p:not(.custom-tt)::text').get()
+                    
+                    if time_span:
+                        metadata['last_updated'] = time_span
+                    elif time_text:
+                        parsed_time = self._parse_relative_time(time_text.strip())
+                        metadata['last_updated'] = parsed_time if parsed_time else time_text.strip()
                     
                 elif '资源创建时间' in label:
-                    # 优先获取绝对时间（title 属性），否则获取相对时间
+                    # 优先获取绝对时间（title 属性），否则解析相对时间
                     time_span = item.css('span::attr(title)').get()
-                    time_relative = item.css('span::text').get()
+                    time_text = item.css('span::text').get()
+                    # 如果没有 span，直接从 p 标签获取文本
+                    if not time_text:
+                        time_text = item.css('p:not(.custom-tt)::text').get()
+                    
                     if time_span:
                         metadata['created_at'] = time_span
-                    elif time_relative:
-                        metadata['created_at'] = time_relative.strip()
+                    elif time_text:
+                        parsed_time = self._parse_relative_time(time_text.strip())
+                        metadata['created_at'] = parsed_time if parsed_time else time_text.strip()
                         
                 elif '资源作者' in label:
                     author_name = item.css('a::text').get()
