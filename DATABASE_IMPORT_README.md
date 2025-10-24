@@ -17,6 +17,7 @@
 - ✅ 环境变量配置
 - ✅ 自动类型推断（type 字段）
 - ✅ 导入成功后自动清理源文件（默认开启）
+- ✅ 全量替换模式：删除所有旧数据后导入（可选）
 
 ### 2.5.3 验证脚本（scripts/verify_database.py）
 - ✅ 数据统计
@@ -83,21 +84,54 @@ export MYSQL_SSL=false
 
 ### 3. 导入数据
 
-**默认行为：导入成功后自动清理源文件** 🧹
+#### 3.1 增量导入（默认） 📥
+
+**行为**：更新已存在的记录，添加新记录，保留旧记录
 
 ```bash
-# 导入单个列表（自动清理）
+# 导入单个列表（增量 + 自动清理）
 python scripts/import_eyeuc_jsonl_to_mysql.py "per_list_output/eyeuc_list193_*_merged_*.jsonl"
 
-# 导入所有合并文件（自动清理）
+# 导入所有合并文件（增量 + 自动清理）
 python scripts/import_eyeuc_jsonl_to_mysql.py "per_list_output/eyeuc_list*_merged_*.jsonl"
-
-# 导入所有批次文件（包含分批抓取的，自动清理）
-python scripts/import_eyeuc_jsonl_to_mysql.py "per_list_output/eyeuc_list182_*_p*.jsonl"
 
 # 如果需要保留源文件（禁用自动清理）
 CLEANUP=false python scripts/import_eyeuc_jsonl_to_mysql.py "per_list_output/*.jsonl"
 ```
+
+**适用场景**：
+- ✅ 部分数据更新
+- ✅ 增量爬取
+- ✅ 不希望删除任何旧数据
+
+---
+
+#### 3.2 全量替换（推荐用于定时任务） 🔄
+
+**行为**：删除所有旧数据，导入全新数据（事务保护）
+
+```bash
+# 全量替换模式
+FULL_REPLACE=true python scripts/import_eyeuc_jsonl_to_mysql.py "per_list_output/*.jsonl"
+
+# 全量替换 + 禁用清理（用于调试）
+FULL_REPLACE=true CLEANUP=false python scripts/import_eyeuc_jsonl_to_mysql.py "per_list_output/*.jsonl"
+```
+
+**适用场景**：
+- ✅ 定时全量爬取
+- ✅ 需要数据库与爬取结果完全同步
+- ✅ 需要清理已删除的资源
+- ✅ 保持数据库实时最新
+
+**安全机制**：
+- ✅ 事务保护：失败自动回滚
+- ✅ 使用 `TRUNCATE TABLE` 快速删除
+- ✅ 详细日志记录
+
+**详细文档**：参见 `docs/FULL_REPLACE_GUIDE.md`
+
+---
 
 **清理行为说明：**
 - ✅ 导入成功后自动删除已导入的 `.jsonl` 文件

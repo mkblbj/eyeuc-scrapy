@@ -8,21 +8,22 @@ EyeUC JSONL → MySQL 导入脚本
 - 幂等导入（ON DUPLICATE KEY UPDATE）
 - 批量提交（每 200 条）
 - 导入成功后自动清理源文件（可选）
+- 全量替换模式：删除所有旧数据后导入（可选）
 
 用法：
-  # 导入单个文件（自动清理）
+  # 增量导入（默认）- 更新已有数据，添加新数据
   python scripts/import_eyeuc_jsonl_to_mysql.py per_list_output/eyeuc_list193_merged_*.jsonl
   
-  # 导入所有合并文件
-  python scripts/import_eyeuc_jsonl_to_mysql.py "per_list_output/eyeuc_list*_merged_*.jsonl"
+  # 全量替换 - 删除所有旧数据，导入新数据（推荐用于定时任务）
+  FULL_REPLACE=true python scripts/import_eyeuc_jsonl_to_mysql.py "per_list_output/*.jsonl"
   
-  # 导入所有批次文件
-  python scripts/import_eyeuc_jsonl_to_mysql.py "per_list_output/eyeuc_list182_*_p*.jsonl"
-  
-  # 禁用自动清理
-  CLEANUP=false python scripts/import_eyeuc_jsonl_to_mysql.py "per_list_output/*.jsonl"
+  # 全量替换 + 禁用清理（用于调试）
+  FULL_REPLACE=true CLEANUP=false python scripts/import_eyeuc_jsonl_to_mysql.py "per_list_output/*.jsonl"
 
-环境变量：.env
+环境变量：
+  MYSQL_HOST, MYSQL_PORT, MYSQL_USER, MYSQL_PASSWORD, MYSQL_DATABASE - 数据库连接
+  CLEANUP=true/false - 导入成功后自动清理源文件（默认 true）
+  FULL_REPLACE=true/false - 全量替换模式（默认 false）
 """
 
 import os
@@ -374,13 +375,14 @@ def cleanup_imported_files(files):
     print("✨ 清理完成\n")
 
 
-def import_files(glob_pattern, batch_size=200, auto_cleanup=True):
+def import_files(glob_pattern, batch_size=200, auto_cleanup=True, full_replace=False):
     """导入文件
     
     Args:
         glob_pattern: 文件匹配模式
         batch_size: 批量提交大小
         auto_cleanup: 导入成功后自动清理源文件（默认 True）
+        full_replace: 导入前先删除所有旧数据（默认 False）
     """
     # 展开 glob
     files = sorted(glob.glob(glob_pattern))
@@ -401,6 +403,30 @@ def import_files(glob_pattern, batch_size=200, auto_cleanup=True):
     
     # 确保表结构
     ensure_schema(conn)
+    
+    # 全量替换：删除所有旧数据
+    if full_replace:
+        print("🗑️  全量替换模式：删除所有旧数据...")
+        try:
+            with conn.cursor() as cur:
+                # 禁用外键检查，加快删除速度
+                cur.execute("SET FOREIGN_KEY_CHECKS=0")
+                
+                # 清空所有表（按顺序）
+                tables = ['downloads', 'versions', 'images', 'mods', 'lists']
+                for table in tables:
+                    cur.execute(f"TRUNCATE TABLE {table}")
+                    print(f"  ✅ 清空表: {table}")
+                
+                # 恢复外键检查
+                cur.execute("SET FOREIGN_KEY_CHECKS=1")
+            
+            conn.commit()
+            print("✅ 所有旧数据已删除\n")
+        except Exception as e:
+            print(f"❌ 删除旧数据失败: {e}")
+            conn.rollback()
+            raise
     
     # 导入数据
     total_items = 0
@@ -504,7 +530,17 @@ def main():
     # 读取 CLEANUP 环境变量（默认 true）
     auto_cleanup = os.getenv('CLEANUP', 'true').lower() not in ('false', '0', 'no')
     
-    import_files(glob_pattern, auto_cleanup=auto_cleanup)
+    # 读取 FULL_REPLACE 环境变量（默认 false）
+    full_replace = os.getenv('FULL_REPLACE', 'false').lower() in ('true', '1', 'yes')
+    
+    # 显示模式提示
+    if full_replace:
+        print("⚠️  " + "=" * 76)
+        print("⚠️  全量替换模式：将删除所有旧数据，然后导入新数据")
+        print("⚠️  " + "=" * 76)
+        print()
+    
+    import_files(glob_pattern, auto_cleanup=auto_cleanup, full_replace=full_replace)
 
 
 if __name__ == "__main__":
