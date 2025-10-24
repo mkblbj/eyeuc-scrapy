@@ -2,7 +2,13 @@
 # EyeUC 分批抓取脚本
 # 用法: ./batch_crawl.sh <list_id> <end_page> [batch_size] [cookies] [start_page]
 
-set -e  # 遇到错误立即退出
+# 注意：不使用 set -e，因为 scrapy 即使成功也可能返回非零退出码
+
+# 激活虚拟环境（如果存在）
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -f "$SCRIPT_DIR/venv/bin/activate" ]; then
+    source "$SCRIPT_DIR/venv/bin/activate"
+fi
 
 # 参数
 LIST_ID=${1:-182}
@@ -50,12 +56,17 @@ echo -e "  Cookies: ${GREEN}$COOKIES${NC}"
 echo -e "${BLUE}========================================${NC}"
 echo ""
 
-# 确认
-read -p "确认开始抓取？(y/N) " -n 1 -r
-echo
-if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-    echo -e "${YELLOW}已取消${NC}"
-    exit 0
+# 确认（交互模式才需要，后台运行自动开始）
+if [ -t 0 ]; then
+    read -p "确认开始抓取？(y/N) " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        echo -e "${YELLOW}已取消${NC}"
+        exit 0
+    fi
+else
+    echo -e "${GREEN}✅ 后台模式，自动开始...${NC}"
+    echo ""
 fi
 
 # 记录开始时间
@@ -89,12 +100,18 @@ for (( batch=1; batch<=NUM_BATCHES; batch++ )); do
         echo -e "${RED}❌ 批次 $batch/$NUM_BATCHES 失败（第 $start-$end 页）${NC}"
         FAILED_BATCHES+=("$start-$end")
         
-        # 询问是否继续
-        read -p "继续下一批次？(Y/n) " -n 1 -r
-        echo
-        if [[ $REPLY =~ ^[Nn]$ ]]; then
-            echo -e "${YELLOW}已停止${NC}"
-            break
+        # 后台运行时自动继续，交互模式才询问
+        if [ -t 0 ]; then
+            # 交互模式：询问是否继续
+            read -p "继续下一批次？(Y/n) " -n 1 -r
+            echo
+            if [[ $REPLY =~ ^[Nn]$ ]]; then
+                echo -e "${YELLOW}已停止${NC}"
+                break
+            fi
+        else
+            # 后台模式：自动继续
+            echo -e "${YELLOW}自动继续下一批次...${NC}"
         fi
     fi
     
@@ -130,12 +147,33 @@ echo ""
 
 # 询问是否合并
 if [ ${#FAILED_BATCHES[@]} -eq 0 ]; then
-    read -p "现在合并结果文件？(Y/n) " -n 1 -r
-    echo
+    REPLY="Y"
+    if [ -t 0 ]; then
+        read -p "现在合并结果文件？(Y/n) " -n 1 -r
+        echo
+    else
+        echo -e "${GREEN}✅ 非交互模式，自动合并结果...${NC}"
+    fi
+
     if [[ ! $REPLY =~ ^[Nn]$ ]]; then
         echo -e "${BLUE}正在合并...${NC}"
-        python3 merge_batches.py $LIST_ID
-        echo -e "${GREEN}✅ 合并完成${NC}"
+        if python3 merge_batches.py $LIST_ID; then
+            echo -e "${GREEN}✅ 合并完成${NC}"
+
+            MERGED_FILE=$(ls -t per_list_output/eyeuc_list${LIST_ID}_*_merged_*.jsonl 2>/dev/null | head -1)
+            if [ -n "$MERGED_FILE" ]; then
+                echo -e "${BLUE}正在导入数据库: ${YELLOW}${MERGED_FILE}${NC}"
+                if python3 scripts/import_eyeuc_jsonl_to_mysql.py "$MERGED_FILE"; then
+                    echo -e "${GREEN}✅ 数据库导入完成${NC}"
+                else
+                    echo -e "${RED}❌ 数据库导入失败${NC}"
+                fi
+            else
+                echo -e "${YELLOW}⚠️  未找到合并后的文件，跳过数据库导入${NC}"
+            fi
+        else
+            echo -e "${RED}❌ 合并失败，已跳过数据库导入${NC}"
+        fi
     fi
 else
     echo -e "${YELLOW}⚠️  有批次失败，建议先重跑失败的批次再合并${NC}"

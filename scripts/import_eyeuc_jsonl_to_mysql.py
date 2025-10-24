@@ -7,9 +7,10 @@ EyeUC JSONL → MySQL 导入脚本
 - 支持目录 glob 批量导入
 - 幂等导入（ON DUPLICATE KEY UPDATE）
 - 批量提交（每 200 条）
+- 导入成功后自动清理源文件（可选）
 
 用法：
-  # 导入单个文件
+  # 导入单个文件（自动清理）
   python scripts/import_eyeuc_jsonl_to_mysql.py per_list_output/eyeuc_list193_merged_*.jsonl
   
   # 导入所有合并文件
@@ -17,6 +18,9 @@ EyeUC JSONL → MySQL 导入脚本
   
   # 导入所有批次文件
   python scripts/import_eyeuc_jsonl_to_mysql.py "per_list_output/eyeuc_list182_*_p*.jsonl"
+  
+  # 禁用自动清理
+  CLEANUP=false python scripts/import_eyeuc_jsonl_to_mysql.py "per_list_output/*.jsonl"
 
 环境变量：.env
 """
@@ -331,14 +335,59 @@ def iter_items_from_file(path):
         print(f"  ❌ 读取文件失败: {e}")
 
 
-def import_files(glob_pattern, batch_size=200):
-    """导入文件"""
+def cleanup_imported_files(files):
+    """清理已成功导入的文件
+    
+    Args:
+        files: 文件路径列表
+    """
+    if not files:
+        return
+    
+    print("🧹 清理已导入的文件...")
+    
+    # 获取所有涉及的目录（用于后续检查是否清空）
+    dirs_to_check = set()
+    for file_path in files:
+        try:
+            file_obj = Path(file_path)
+            if file_obj.exists():
+                os.remove(file_path)
+                print(f"  ✅ 删除: {file_obj.name}")
+                dirs_to_check.add(file_obj.parent)
+        except Exception as e:
+            print(f"  ⚠️  删除失败 {Path(file_path).name}: {e}")
+    
+    # 检查目录是否为空，如果为空则删除
+    for dir_path in dirs_to_check:
+        try:
+            if dir_path.exists() and dir_path.is_dir():
+                remaining = list(dir_path.glob('*'))
+                if not remaining:
+                    print(f"  📁 目录已空，删除: {dir_path.name}")
+                    dir_path.rmdir()
+                else:
+                    print(f"  📁 目录保留（还有 {len(remaining)} 个文件）: {dir_path.name}")
+        except Exception as e:
+            print(f"  ⚠️  检查目录失败 {dir_path}: {e}")
+    
+    print("✨ 清理完成\n")
+
+
+def import_files(glob_pattern, batch_size=200, auto_cleanup=True):
+    """导入文件
+    
+    Args:
+        glob_pattern: 文件匹配模式
+        batch_size: 批量提交大小
+        auto_cleanup: 导入成功后自动清理源文件（默认 True）
+    """
     # 展开 glob
     files = sorted(glob.glob(glob_pattern))
     
     if not files:
         print(f"❌ 未找到匹配的文件: {glob_pattern}")
-        return
+        return False
     
     print(f"📁 找到 {len(files)} 个文件:")
     for f in files:
@@ -357,6 +406,7 @@ def import_files(glob_pattern, batch_size=200):
     total_items = 0
     batch_count = 0
     start_time = time.time()
+    import_success = False
     
     try:
         for file_path in files:
@@ -397,6 +447,7 @@ def import_files(glob_pattern, batch_size=200):
         
         # 最后提交
         conn.commit()
+        import_success = True
         
         elapsed = time.time() - start_time
         print(f"{'='*80}")
@@ -406,7 +457,13 @@ def import_files(glob_pattern, batch_size=200):
         print(f"  总文件: {len(files)}")
         print(f"  用时: {elapsed:.2f}s")
         print(f"  速度: {total_items/elapsed:.1f} items/s")
-        print(f"{'='*80}")
+        print(f"{'='*80}\n")
+        
+        # 自动清理源文件
+        if import_success and auto_cleanup:
+            cleanup_imported_files(files)
+        
+        return True
     
     except Exception as e:
         print(f"\n❌ 导入失败: {e}")
@@ -440,10 +497,14 @@ def main():
         print("  export MYSQL_PASSWORD=your_password")
         print("  export MYSQL_DATABASE=your_database")
         print("  export MYSQL_SSL=false")
+        print("  export CLEANUP=true  # 自动清理源文件（默认）")
         print("\n或使用: source .env")
         sys.exit(1)
     
-    import_files(glob_pattern)
+    # 读取 CLEANUP 环境变量（默认 true）
+    auto_cleanup = os.getenv('CLEANUP', 'true').lower() not in ('false', '0', 'no')
+    
+    import_files(glob_pattern, auto_cleanup=auto_cleanup)
 
 
 if __name__ == "__main__":

@@ -122,8 +122,10 @@ CREATE TABLE IF NOT EXISTS downloads (
   
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   
-  -- 唯一约束（防止重复，URL 截取前 191 字符）
-  UNIQUE KEY uk_dl (mod_id, version_id, fileid, url(191)) COMMENT '防重复',
+  -- 唯一约束（防止重复）
+  -- 注意：fileid 和 url 都可能为 NULL，但不会同时为 NULL
+  UNIQUE KEY uk_dl_internal (mod_id, version_id, fileid) COMMENT '防重复(站内附件)',
+  UNIQUE KEY uk_dl_external (mod_id, version_id, url(191)) COMMENT '防重复(外链)',
   INDEX idx_mod_ver (mod_id, version_id) COMMENT '资源+版本索引',
   
   -- 外键

@@ -906,10 +906,11 @@ class EyeucModsSpider(scrapy.Spider):
         if cdata_match:
             html_content = cdata_match.group(1)
         
-        # 提取完整的分支描述（从 veritem-content 中，支持 Markdown HTML 和纯文本）
-        veritem_content_match = re.search(r'<div class="veritem-content">(.*?)</div>\s*</div>\s*<div class="veritem-footer">', html_content, re.DOTALL)
+        # 提取完整的分支描述（从 veritem-content 中，保留原始 HTML 格式）
+        # 使用灵活的正则：有些页面在 veritem-content 的 </div> 后还有额外的 </div>
+        veritem_content_match = re.search(r'<div class="veritem-content">(.*?)</div>(?:\s*</div>)?\s*<div class="veritem-footer">', html_content, re.DOTALL)
         if veritem_content_match:
-            content_area = veritem_content_match.group(1)
+            content_area = veritem_content_match.group(1).strip()
             selector = scrapy.Selector(text=content_area)
             
             # 优先尝试 Markdown 格式（返回 HTML）
@@ -921,12 +922,13 @@ class EyeucModsSpider(scrapy.Spider):
                     html_intro = re.sub(r'<script[^>]*>.*?</script>', '', html_intro, flags=re.DOTALL | re.IGNORECASE)
                     version_intro = html_intro.strip()
             else:
-                # 如果没有 markdown-body，提取纯文本
-                plain_texts = selector.css('*::text').getall()
-                if plain_texts:
-                    full_intro = ' '.join([t.strip() for t in plain_texts if t.strip()])
-                    if full_intro:
-                        version_intro = full_intro
+                # 如果没有 markdown-body，保留原始 HTML 内容
+                # 清理 script 标签
+                cleaned_html = re.sub(r'<script[^>]*>.*?</script>', '', content_area, flags=re.DOTALL | re.IGNORECASE)
+                # 标准化换行符：将 \r\n 和 \r 统一为空（HTML 中用 <br> 表示换行）
+                cleaned_html = cleaned_html.replace('\r\n', '').replace('\r', '')
+                if cleaned_html.strip():
+                    version_intro = cleaned_html.strip()
         
         # 提取版本名（在 veritem-name 中，格式：<span>V1.1</span> 或 <span>现役/复古</span>）
         version = ''
@@ -949,8 +951,9 @@ class EyeucModsSpider(scrapy.Spider):
             file_pattern = r'showprotocol\([\'"]([^\'"]+)[\'"]'
             file_matches = re.findall(file_pattern, html_content)
             
-            # 提取文件名（从 <em class="bupload"> 中）
-            filename_pattern = r'<em[^>]*class="bupload"[^>]*>.*?([a-zA-Z0-9_\-\.]+\.(iff|rar|zip|7z|png|jpg))</em>'
+            # 提取文件名（从 <em class="bupload"> 中，包含完整文件名）
+            # 匹配 &nbsp; 之后的完整文件名（可能包含空格）
+            filename_pattern = r'<em[^>]*class="bupload"[^>]*>.*?&nbsp;([^<]+?\.(?:iff|rar|zip|7z|png|jpg))</em>'
             filename_matches = re.findall(filename_pattern, html_content, re.IGNORECASE)
             
             # 如果没有找到带扩展名的文件名，尝试提取纯文本文件名
@@ -958,7 +961,7 @@ class EyeucModsSpider(scrapy.Spider):
                 text_filename_pattern = r'<em[^>]*class="bupload"[^>]*>.*?&nbsp;([^<]+)</em>'
                 text_matches = re.findall(text_filename_pattern, html_content)
                 if text_matches:
-                    filename_matches = [(match, '') for match in text_matches]
+                    filename_matches = text_matches  # 直接使用字符串列表
             
             # 检查是否有需要登录的外链/重定向链接（onclick 包含 showWindow('login')）
             login_required_count = html_content.count("showWindow('login'")
@@ -1026,7 +1029,7 @@ class EyeucModsSpider(scrapy.Spider):
                     if fileid_match:
                         # 站内附件：有 fileid
                         fileid = fileid_match.group(1)
-                        filename = filename_matches[idx][0] if idx < len(filename_matches) else f'file_{fileid}'
+                        filename = filename_matches[idx] if idx < len(filename_matches) else f'file_{fileid}'
                         size = size_matches[idx] if idx < len(size_matches) else ''
                         
                         downloads.append({
@@ -1040,7 +1043,7 @@ class EyeucModsSpider(scrapy.Spider):
                         })
                     else:
                         # 外部链接：没有 fileid，提取链接名称
-                        link_name = filename_matches[idx][0] if idx < len(filename_matches) else '外部链接'
+                        link_name = filename_matches[idx] if idx < len(filename_matches) else '外部链接'
                         
                         # 判断链接类型
                         link_name_lower = link_name.lower()

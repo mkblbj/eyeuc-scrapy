@@ -12,6 +12,9 @@ web-bundles
 venv
 __pycache__
 .job
+logs
+log
+logrotate
 
 #db
 per_list_output
